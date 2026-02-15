@@ -1,0 +1,6 @@
+{
+  "name": "work",
+  "data_dir": "/Users/anton/code/orchestrator/data",
+  "log_level": "INFO",
+  "projects": []
+}

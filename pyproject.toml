@@ -1,0 +1,25 @@
+[project]
+name = "orchestrator"
+version = "0.1.0"
+description = "Multi-project agent orchestration system"
+requires-python = ">=3.11"
+dependencies = [
+    "claude-agent-sdk",
+    "apscheduler>=3.10,<4",
+    "typer>=0.9",
+    "rich>=13.0",
+]
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["orchestrator*"]
+
+[project.scripts]
+orch = "orchestrator.cli:app"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"

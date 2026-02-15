@@ -1,0 +1,43 @@
+{
+  "name": "personal",
+  "data_dir": "./data",
+  "log_level": "INFO",
+  "projects": [
+    {
+      "name": "my-python-app",
+      "path": "/path/to/my-python-app",
+      "enabled": true,
+      "priority": 1,
+      "max_workers": 2,
+      "worker_timeout_seconds": 300,
+      "model": "sonnet",
+      "planner_model": "sonnet",
+      "judge_model": "haiku",
+      "max_budget_per_task": 0.50,
+      "git_branch_prefix": "orch",
+      "planner_context_files": ["CLAUDE.md"],
+      "backlog_source": "claude_md",
+      "cycle_interval_minutes": 30,
+      "test_command": "pytest",
+      "lint_command": "ruff check ."
+    },
+    {
+      "name": "my-web-app",
+      "path": "/path/to/my-web-app",
+      "enabled": false,
+      "priority": 2,
+      "max_workers": 3,
+      "worker_timeout_seconds": 300,
+      "model": "sonnet",
+      "planner_model": "sonnet",
+      "judge_model": "haiku",
+      "max_budget_per_task": 0.50,
+      "git_branch_prefix": "orch",
+      "planner_context_files": ["CLAUDE.md"],
+      "backlog_source": "claude_md",
+      "cycle_interval_minutes": 30,
+      "test_command": "npm test",
+      "lint_command": "npm run lint"
+    }
+  ]
+}
