@@ -238,8 +238,13 @@ async def run_cycle(project: ProjectConfig, store: StateStore) -> PlannerCycle:
                         store.update_task_status(result.task_id, TaskStatus.FAILED)
                         failed += 1
             else:
-                store.update_task_status(result.task_id, TaskStatus.FAILED)
-                failed += 1
+                # When a worker fails (error, branch issue) and retries remain,
+                # the system shall re-queue the task
+                if task and task.retry_count < task.max_retries:
+                    store.increment_retry(result.task_id)
+                else:
+                    store.update_task_status(result.task_id, TaskStatus.FAILED)
+                    failed += 1
 
         # Step 5: Complete the cycle
         store.complete_cycle(

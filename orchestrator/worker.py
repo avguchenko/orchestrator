@@ -44,13 +44,22 @@ def _get_default_branch(cwd: str) -> str:
 
 
 def _create_branch(cwd: str, branch: str) -> None:
-    """Create and checkout a new branch from the default branch."""
+    """Create or checkout a task branch from the default branch.
+
+    When retrying a task, the branch may already exist. The worker shall
+    delete it and recreate from the latest default branch to get a clean state.
+    """
     default = _get_default_branch(cwd)
     try:
         _git(cwd, "checkout", default)
         _git(cwd, "pull", "--ff-only")
     except RuntimeError:
         _git(cwd, "checkout", default)
+    # Delete existing branch if retrying
+    try:
+        _git(cwd, "branch", "-D", branch)
+    except RuntimeError:
+        pass  # Branch doesn't exist yet, that's fine
     _git(cwd, "checkout", "-b", branch)
 
 
