@@ -1,4 +1,4 @@
-"""Judge: evaluates worker output via tests, lint, and optional SDK query()."""
+"""Judge: evaluates worker output via tests, lint, and AI code review."""
 
 from __future__ import annotations
 
@@ -95,22 +95,83 @@ def _run_lint(cwd: str, command: str) -> tuple[bool, str]:
         return False, f"Lint execution error: {e}"
 
 
+def _get_changed_files(cwd: str, branch: str) -> str:
+    """Get list of files changed by the worker on their branch vs main."""
+    # Try diffing against main/master to get the worker's changes
+    for base in ("main", "master"):
+        try:
+            result = subprocess.run(
+                ["git", "diff", "--name-only", f"{base}...{branch}"],
+                cwd=cwd, capture_output=True, text=True, timeout=15,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                return result.stdout.strip()
+        except Exception:
+            continue
+    # Fallback: diff HEAD~1
+    try:
+        result = subprocess.run(
+            ["git", "diff", "--name-only", "HEAD~1"],
+            cwd=cwd, capture_output=True, text=True, timeout=15,
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except Exception:
+        pass
+    return "(unable to determine changed files)"
+
+
 async def _ai_evaluate(
+    task: Task,
     result: WorkerResult,
     project: ProjectConfig,
     test_output: str,
     lint_output: str,
+    tests_passed_bool: bool,
+    lint_ok: bool,
+    changed_files: str,
 ) -> tuple[bool, str, float]:
-    """When test results are ambiguous, the judge shall use an AI evaluation for nuanced assessment."""
+    """The judge shall always use AI evaluation for every task."""
     system = load_prompt("judge_system.md")
 
     # Ensure verdicts directory exists for the judge to write to
     verdicts_dir = project.abs_path / ".orch" / "verdicts"
     verdicts_dir.mkdir(parents=True, exist_ok=True)
 
+    # Parse test counts from output for the prompt
+    tests_passed_count = 0
+    tests_failed_count = 0
+    for line in test_output.splitlines():
+        if "passed" in line:
+            parts = line.split(",")
+            for p in parts:
+                p = p.strip()
+                if "passed" in p:
+                    try:
+                        tests_passed_count = int(p.split()[0])
+                    except (ValueError, IndexError):
+                        pass
+                if "failed" in p or "error" in p:
+                    try:
+                        tests_failed_count = int(p.split()[0])
+                    except (ValueError, IndexError):
+                        pass
+
     prompt = f"""# Worker Output Evaluation
 
-## Task Output
+## Task
+Title: {task.title}
+Description: {task.description}
+Type: {task.task_type.value}
+
+## Automated Checks
+Tests: {"PASSED" if tests_passed_bool else "FAILED"} ({tests_passed_count} passed, {tests_failed_count} failed)
+Lint: {"PASSED" if lint_ok else "FAILED"}
+
+## Files Changed by Worker
+{changed_files}
+
+## Worker Output
 {result.output[:2000]}
 
 ## Diff Stats
@@ -122,6 +183,11 @@ Files changed: {result.files_changed}
 
 ## Lint Output
 {lint_output[:500]}
+
+Evaluate the worker's changes. Pay special attention to:
+- Whether new test files appear in the test output (were they discovered and executed?)
+- Whether the changes match the task description
+- Code quality and correctness of the actual diff
 
 Write your detailed analysis to `.orch/verdicts/{result.task_id}_analysis.md` — include what you inspected, issues found, and your reasoning. Then return the JSON verdict.
 """
@@ -200,12 +266,10 @@ async def evaluate_result(
     project: ProjectConfig,
     store: StateStore,
 ) -> JudgeVerdict:
-    """Evaluate a worker result through tests, lint, and optional AI review.
+    """Evaluate a worker result through tests, lint, and AI review.
 
     The judge shall checkout the task branch before running checks.
-    When all automated checks pass, the verdict shall be positive without
-    AI evaluation. When automated checks fail or produce ambiguous results,
-    the judge shall invoke AI evaluation.
+    AI evaluation always runs — automated checks inform but don't replace review.
     """
     cwd = str(project.abs_path)
     total_cost = 0.0
@@ -223,28 +287,23 @@ async def evaluate_result(
         # Run lint
         lint_ok, lint_output = _run_lint(cwd, project.lint_command)
 
-        # When both tests and lint pass, the judge shall return a positive verdict
-        if tests_passed_bool and lint_ok:
-            verdict = JudgeVerdict(
-                task_id=result.task_id,
-                passed=True,
-                tests_passed=tests_passed,
-                tests_failed=tests_failed,
-                lint_ok=lint_ok,
-                notes="All automated checks passed",
-            )
-            _write_verdict_log(project, result.task_id, verdict, test_output, lint_output)
-            return verdict
+        # Get list of files the worker changed for diff-aware evaluation
+        changed_files = _get_changed_files(cwd, task.branch)
 
-        # When automated checks fail, the judge shall use AI evaluation for nuance
+        # Always run AI evaluation — automated checks inform but don't replace review
         ai_passed, ai_notes, ai_cost = await _ai_evaluate(
-            result, project, test_output, lint_output
+            task, result, project, test_output, lint_output,
+            tests_passed_bool, lint_ok, changed_files,
         )
         total_cost += ai_cost
 
+        # AI verdict determines pass/fail, but hard-fail if tests or lint failed
+        # and AI didn't catch it
+        passed = ai_passed and tests_passed_bool and lint_ok
+
         verdict = JudgeVerdict(
             task_id=result.task_id,
-            passed=ai_passed,
+            passed=passed,
             tests_passed=tests_passed,
             tests_failed=tests_failed,
             lint_ok=lint_ok,
