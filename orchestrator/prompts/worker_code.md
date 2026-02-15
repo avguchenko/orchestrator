@@ -25,6 +25,18 @@ Read, Edit, Write, Bash, Grep, Glob
 - The worker shall not modify files outside the project directory.
 - The worker shall not install new dependencies unless the task explicitly requires it.
 
+## Before You Finish (MANDATORY)
+
+You MUST complete this checklist before finishing. Skipping this causes task failure.
+
+1. **List every file you modified or created.** For each one, state which task requirement it satisfies.
+2. **If any modified file is NOT mentioned in or implied by the task description, revert that change.** Use `git checkout -- <file>` to undo out-of-scope edits.
+3. **Verify every acceptance criterion** by reading the actual files you changed — not from memory. Use the Read tool to confirm the code is correct.
+4. **Run the specific test file** related to your changes (not the full suite) to confirm it compiles and passes. Use Bash to run the test.
+5. **If any required file does not exist on disk, you are not done.** Create it.
+
+Do NOT claim completion if any criterion is unmet. It is better to report partial progress honestly than to falsely claim success.
+
 ## Out of Scope
 - The worker shall not run the full test suite (the judge handles that).
 - The worker shall not commit changes (the orchestrator handles git).

@@ -121,6 +121,50 @@ def _get_changed_files(cwd: str, branch: str) -> str:
     return "(unable to determine changed files)"
 
 
+def _check_scope(task: Task, changed_files: str) -> list[str]:
+    """Check if the worker's changes are within the expected scope.
+
+    Returns a list of scope violation warnings (empty if clean).
+    """
+    warnings = []
+    if not changed_files or changed_files == "(unable to determine changed files)":
+        return warnings
+
+    files = changed_files.strip().splitlines()
+    task_lower = (task.title + " " + task.description).lower()
+
+    # Test tasks should not modify production code
+    if task.task_type.value == "test":
+        non_test_files = [
+            f for f in files
+            if not any(pattern in f for pattern in [
+                "spec.", ".test.", "_test.", "test_", "/tests/", "/__tests__/",
+            ])
+        ]
+        if non_test_files:
+            warnings.append(
+                f"SCOPE VIOLATION: Test task modified {len(non_test_files)} "
+                f"non-test files: {', '.join(non_test_files)}"
+            )
+
+    # Flag when too many files changed (likely out-of-scope)
+    if len(files) > 15:
+        warnings.append(
+            f"SCOPE WARNING: Worker changed {len(files)} files — "
+            f"this seems excessive for a single task."
+        )
+
+    # Flag when worker changed files in many different directories
+    dirs = set(f.rsplit("/", 1)[0] if "/" in f else "." for f in files)
+    if len(dirs) > 5:
+        warnings.append(
+            f"SCOPE WARNING: Changes span {len(dirs)} directories — "
+            f"expected focused changes in 1-3 directories."
+        )
+
+    return warnings
+
+
 async def _ai_evaluate(
     task: Task,
     result: WorkerResult,
@@ -130,6 +174,7 @@ async def _ai_evaluate(
     tests_passed_bool: bool,
     lint_ok: bool,
     changed_files: str,
+    scope_warnings: list[str] | None = None,
 ) -> tuple[bool, str, float]:
     """The judge shall always use AI evaluation for every task."""
     system = load_prompt("judge_system.md")
@@ -157,6 +202,10 @@ async def _ai_evaluate(
                     except (ValueError, IndexError):
                         pass
 
+    scope_section = ""
+    if scope_warnings:
+        scope_section = "\n## Scope Violations (Automated)\n" + "\n".join(f"- {w}" for w in scope_warnings) + "\n"
+
     prompt = f"""# Worker Output Evaluation
 
 ## Task
@@ -170,7 +219,7 @@ Lint: {"PASSED" if lint_ok else "FAILED"}
 
 ## Files Changed by Worker
 {changed_files}
-
+{scope_section}
 ## Worker Output
 {result.output[:2000]}
 
@@ -290,10 +339,17 @@ async def evaluate_result(
         # Get list of files the worker changed for diff-aware evaluation
         changed_files = _get_changed_files(cwd, task.branch)
 
+        # Automated scope check — flag out-of-scope changes
+        scope_warnings = _check_scope(task, changed_files)
+        if scope_warnings:
+            for w in scope_warnings:
+                logger.warning("Task %s: %s", task.id, w)
+
         # Always run AI evaluation — automated checks inform but don't replace review
         ai_passed, ai_notes, ai_cost = await _ai_evaluate(
             task, result, project, test_output, lint_output,
             tests_passed_bool, lint_ok, changed_files,
+            scope_warnings,
         )
         total_cost += ai_cost
 

@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import json
 import logging
+import subprocess
 from pathlib import Path
 
 from claude_agent_sdk import ClaudeAgentOptions, query
 
 from .config import ProjectConfig
 from .judge import evaluate_result
+from .refinery import merge_branch, resolve_conflicts, cleanup_branch
 from .models import (
     CycleStatus,
     PlannerCycle,
@@ -246,7 +248,42 @@ async def run_cycle(project: ProjectConfig, store: StateStore) -> PlannerCycle:
                     store.update_task_status(result.task_id, TaskStatus.FAILED)
                     failed += 1
 
-        # Step 5: Complete the cycle
+        # Step 5: Refinery — merge passing branches into default, push
+        passed_tasks = [
+            task_by_id[tid] for tid in task_by_id
+            if store.get_task(tid) and store.get_task(tid).status == TaskStatus.DONE
+        ]
+        merged = 0
+        for task in passed_tasks:
+            success, message = merge_branch(task, project)
+            if success:
+                merged += 1
+                cleanup_branch(task, project)
+                logger.info("Refinery merged %s", task.branch)
+            else:
+                # Attempt AI conflict resolution
+                logger.info("Merge conflict on %s, attempting AI resolution", task.branch)
+                resolved = await resolve_conflicts(task, project, message)
+                if resolved:
+                    merged += 1
+                    cleanup_branch(task, project)
+                    logger.info("Refinery resolved conflicts and merged %s", task.branch)
+                else:
+                    logger.warning("Refinery could not merge %s: %s", task.branch, message[:200])
+
+        # Push merged changes to remote
+        if merged > 0:
+            cwd = str(project.abs_path)
+            push_result = subprocess.run(
+                ["git", "push"],
+                cwd=cwd, capture_output=True, text=True, timeout=30,
+            )
+            if push_result.returncode == 0:
+                logger.info("Pushed %d merged branches to remote", merged)
+            else:
+                logger.warning("Push failed: %s", push_result.stderr[:200])
+
+        # Step 6: Complete the cycle
         store.complete_cycle(
             cycle.id,
             CycleStatus.COMPLETED,

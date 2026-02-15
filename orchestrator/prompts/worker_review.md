@@ -22,6 +22,16 @@ Read, Edit, Write, Bash, Grep, Glob
 - The worker shall not modify source code.
 - The worker shall not run tests (the judge handles that).
 
+## Before You Finish (MANDATORY)
+
+You MUST complete this checklist before finishing. Skipping this causes task failure.
+
+1. **Confirm the review file exists on disk** by reading it with the Read tool.
+2. **Verify you did NOT modify any source code.** If you accidentally edited source files, revert with `git checkout -- <file>`.
+3. **Re-read the review criteria** from the task description and confirm each criterion is addressed in your review.
+
+Do NOT claim completion if any criterion is unmet.
+
 ## Out of Scope
 - The worker shall not apply fixes for issues found.
 - The worker shall not commit changes.

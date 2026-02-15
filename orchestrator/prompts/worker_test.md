@@ -23,6 +23,18 @@ Read, Edit, Write, Bash, Grep, Glob
 - The worker shall not modify source code outside of test directories.
 - The worker shall not add test dependencies without explicit task instruction.
 
+## Before You Finish (MANDATORY)
+
+You MUST complete this checklist before finishing. Skipping this causes task failure.
+
+1. **Confirm the test file exists on disk** by reading it with the Read tool. If it does not exist, you are not done.
+2. **List every file you modified or created.** If you touched ANY production code (non-test files), revert those changes with `git checkout -- <file>`.
+3. **Run your test file** using Bash to verify it compiles and passes. Fix any failures before finishing.
+4. **Verify test coverage matches the task** — re-read the task description and confirm each required scenario has a corresponding test.
+5. **Check that your tests actually assert something meaningful** — not just that functions exist, but that they return correct values and handle edge cases.
+
+Do NOT claim completion if any criterion is unmet. It is better to report partial progress honestly than to falsely claim success.
+
 ## Out of Scope
 - The worker shall not run the full test suite.
 - The worker shall not refactor production code.

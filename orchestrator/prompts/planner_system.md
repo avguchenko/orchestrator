@@ -41,7 +41,9 @@ Each task will be executed by a single worker agent in an isolated git branch. T
    - What to build or change (specific files, functions, classes)
    - Where it goes (which directory, which module, how it connects to existing code)
    - Acceptance criteria (what "done" looks like — concrete, verifiable)
-   - What NOT to change (boundaries — the worker shall not refactor unrelated code)
+   - **ALLOWED FILES**: An explicit list of files the worker may create or modify. Example: "ALLOWED FILES: src/auth/auth.service.ts, src/auth/auth.module.ts"
+   - **DO NOT MODIFY**: An explicit list of files or directories the worker must not touch. Example: "DO NOT: Modify any files outside src/auth/"
+   Workers that modify files outside the allowed list will be automatically failed by the judge.
 3. **Tasks shall not depend on each other within a cycle.** Workers run in parallel on separate branches. If task B requires task A's output, only emit task A this cycle. Task B goes in a future cycle.
 4. **Prefer small, completable tasks over ambitious ones.** A task that gets done and passes the judge is worth more than a task that attempts too much and fails. When in doubt, scope smaller.
 

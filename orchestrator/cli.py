@@ -73,9 +73,10 @@ def start(
 @app.command()
 def run(
     project: str = typer.Option(..., "--project", "-p", help="Project name"),
+    cycles: int = typer.Option(1, "--cycles", "-n", help="Number of cycles to run"),
     config: str = typer.Option(None, "--config", "-c", help="Path to portfolio config JSON"),
 ):
-    """Run a single planner cycle for a project."""
+    """Run one or more planner cycles for a project."""
     config_path = _resolve_config(config)
     cfg = load_config(config_path)
 
@@ -85,9 +86,11 @@ def run(
     )
 
     orch = PortfolioOrchestrator(cfg)
-    console.print(f"Running cycle for [bold]{project}[/bold]...")
-    orch.run_single_cycle(project)
-    console.print("[green]Cycle complete[/green]")
+    for i in range(1, cycles + 1):
+        console.print(f"Running cycle [bold]{i}/{cycles}[/bold] for [bold]{project}[/bold]...")
+        orch.run_single_cycle(project)
+        console.print(f"[green]Cycle {i}/{cycles} complete[/green]")
+    console.print(f"[green]All {cycles} cycles complete[/green]")
 
 
 @app.command()
