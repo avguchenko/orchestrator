@@ -214,7 +214,7 @@ Description: {task.description}
 Type: {task.task_type.value}
 
 ## Automated Checks
-Tests: {"PASSED" if tests_passed_bool else "FAILED"} ({tests_passed_count} passed, {tests_failed_count} failed)
+Tests: {"PASSED (exit code 0)" if tests_passed_bool else "FAILED (exit code non-zero — determine if failures are pre-existing or caused by worker)"} ({tests_passed_count} passed, {tests_failed_count} failed)
 Lint: {"PASSED" if lint_ok else "FAILED (advisory — pre-existing lint issues do not block approval)"}
 
 ## Files Changed by Worker
@@ -355,10 +355,11 @@ async def evaluate_result(
         )
         total_cost += ai_cost
 
-        # Tests are a hard gate — failing tests always fail the verdict.
-        # Lint is advisory — the AI judge decides if lint issues are
-        # pre-existing or introduced by the worker.
-        passed = ai_passed and tests_passed_bool
+        # The AI judge is the sole arbiter of pass/fail.
+        # It receives test output, lint output, changed files, and scope
+        # warnings — and decides whether failures are pre-existing or
+        # introduced by the worker.
+        passed = ai_passed
 
         verdict = JudgeVerdict(
             task_id=result.task_id,
