@@ -95,6 +95,17 @@ def _run_lint(cwd: str, command: str) -> tuple[bool, str]:
         return False, f"Lint execution error: {e}"
 
 
+def _count_lint_warnings(output: str) -> int:
+    """Count warning lines in lint output. Works with ESLint-style output."""
+    count = 0
+    for line in output.splitlines():
+        if "warning" in line.lower() and (
+            "warning " in line or "warning\t" in line or "warnings" not in line.lower()
+        ):
+            count += 1
+    return count
+
+
 def _get_changed_files(cwd: str, branch: str) -> str:
     """Get list of files changed by the worker on their branch vs main."""
     # Try diffing against main/master to get the worker's changes
@@ -175,6 +186,9 @@ async def _ai_evaluate(
     lint_ok: bool,
     changed_files: str,
     scope_warnings: list[str] | None = None,
+    lint_delta: int = 0,
+    baseline_warnings: int = 0,
+    branch_warnings: int = 0,
 ) -> tuple[bool, str, float]:
     """The judge shall always use AI evaluation for every task."""
     system = load_prompt("judge_system.md")
@@ -215,7 +229,7 @@ Type: {task.task_type.value}
 
 ## Automated Checks
 Tests: {"PASSED (exit code 0)" if tests_passed_bool else "FAILED (exit code non-zero — determine if failures are pre-existing or caused by worker)"} ({tests_passed_count} passed, {tests_failed_count} failed)
-Lint: {"PASSED" if lint_ok else "FAILED (advisory — pre-existing lint issues do not block approval)"}
+Lint: {baseline_warnings} warnings on main → {branch_warnings} on branch (delta: {lint_delta:+d}){" ✓ improved or unchanged" if lint_delta <= 0 else " ⚠ worker introduced new warnings"}
 
 ## Files Changed by Worker
 {changed_files}
@@ -238,7 +252,7 @@ Evaluate the worker's changes. Pay special attention to:
 - Whether the changes match the task description
 - Code quality and correctness of the actual diff
 
-**Verdict criteria**: Set "passed" to true when tests pass AND the worker's code correctly implements the task. Pre-existing lint warnings do NOT block approval. Only fail for: test failures caused by the worker, incorrect/incomplete implementation, or scope violations.
+**Verdict criteria**: Set "passed" to true when the worker's code correctly implements the task and doesn't introduce new problems. Pre-existing test failures and lint warnings do NOT block approval. Only fail for: new test failures caused by the worker, incorrect/incomplete implementation, scope violations, or a significant increase in lint warnings (delta > 0 means the worker added warnings).
 
 Write your detailed analysis to `.orch/verdicts/{result.task_id}_analysis.md` — include what you inspected, issues found, and your reasoning. Then return the JSON verdict.
 """
@@ -282,6 +296,9 @@ def _write_verdict_log(
     verdict: JudgeVerdict,
     test_output: str,
     lint_output: str,
+    lint_delta: int = 0,
+    baseline_warnings: int = 0,
+    branch_warnings: int = 0,
 ) -> None:
     """Write judge verdict to .orch/verdicts/{task_id}.md for audit."""
     log_dir = project.abs_path / ".orch" / "verdicts"
@@ -291,7 +308,7 @@ def _write_verdict_log(
         f"# Judge Verdict: {task_id}\n\n"
         f"- **Passed**: {verdict.passed}\n"
         f"- **Tests**: {verdict.tests_passed} passed, {verdict.tests_failed} failed\n"
-        f"- **Lint**: {'ok' if verdict.lint_ok else 'failed'}\n"
+        f"- **Lint**: {baseline_warnings} → {branch_warnings} warnings (delta: {lint_delta:+d})\n"
         f"- **Cost**: ${verdict.cost_usd:.4f}\n\n"
         f"## Notes\n{verdict.notes}\n\n"
         f"## Test Output\n```\n{test_output[:3000]}\n```\n\n"
@@ -325,6 +342,10 @@ async def evaluate_result(
     cwd = str(project.abs_path)
     total_cost = 0.0
 
+    # Run lint on main first to get baseline warning count
+    baseline_lint_ok, baseline_lint_output = _run_lint(cwd, project.lint_command)
+    baseline_warnings = _count_lint_warnings(baseline_lint_output)
+
     # Checkout the task branch to test the worker's changes
     if not _git_checkout(cwd, task.branch):
         logger.warning("Could not checkout %s for judging, running on current branch", task.branch)
@@ -335,8 +356,10 @@ async def evaluate_result(
             cwd, project.test_command
         )
 
-        # Run lint
+        # Run lint on the worker's branch
         lint_ok, lint_output = _run_lint(cwd, project.lint_command)
+        branch_warnings = _count_lint_warnings(lint_output)
+        lint_delta = branch_warnings - baseline_warnings
 
         # Get list of files the worker changed for diff-aware evaluation
         changed_files = _get_changed_files(cwd, task.branch)
@@ -351,7 +374,7 @@ async def evaluate_result(
         ai_passed, ai_notes, ai_cost = await _ai_evaluate(
             task, result, project, test_output, lint_output,
             tests_passed_bool, lint_ok, changed_files,
-            scope_warnings,
+            scope_warnings, lint_delta, baseline_warnings, branch_warnings,
         )
         total_cost += ai_cost
 
@@ -370,7 +393,10 @@ async def evaluate_result(
             notes=ai_notes,
             cost_usd=total_cost,
         )
-        _write_verdict_log(project, result.task_id, verdict, test_output, lint_output)
+        _write_verdict_log(
+            project, result.task_id, verdict, test_output, lint_output,
+            lint_delta, baseline_warnings, branch_warnings,
+        )
         return verdict
     finally:
         # Return to default branch after judging
