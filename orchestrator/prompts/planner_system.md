@@ -86,7 +86,7 @@ The planner shall return a JSON object:
 
 ## Constraints
 
-- The planner shall produce at most 5 tasks per cycle.
+- The planner shall produce at most `max_workers` tasks per cycle.
 - The planner shall produce at most `max_workers` tasks when starting fresh (no point creating tasks that won't run this cycle).
 - Each task description shall be 200-1500 characters. Under 200 is too vague for a worker. Over 1500 is likely too complex for one task.
 - The planner shall only write to the `.orch/plans/` directory. It shall not modify project source code.

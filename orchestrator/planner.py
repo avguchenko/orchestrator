@@ -215,12 +215,14 @@ async def run_cycle(project: ProjectConfig, store: StateStore) -> PlannerCycle:
         # Step 4: Judge each result
         completed = 0
         failed = 0
+        task_by_id = {t.id: t for t in to_run}
         for result in results:
             store.save_worker_result(result)
             total_cost += result.cost_usd
+            task = task_by_id.get(result.task_id) or store.get_task(result.task_id)
 
-            if result.success:
-                verdict = await evaluate_result(result, project, store)
+            if result.success and task:
+                verdict = await evaluate_result(task, result, project, store)
                 store.save_verdict(verdict)
                 total_cost += verdict.cost_usd
 
@@ -230,8 +232,7 @@ async def run_cycle(project: ProjectConfig, store: StateStore) -> PlannerCycle:
                 else:
                     # When a task fails judge evaluation and retries remain,
                     # the system shall re-queue the task
-                    task = store.get_task(result.task_id)
-                    if task and task.retry_count < task.max_retries:
+                    if task.retry_count < task.max_retries:
                         store.increment_retry(result.task_id)
                     else:
                         store.update_task_status(result.task_id, TaskStatus.FAILED)

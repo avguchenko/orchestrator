@@ -8,7 +8,7 @@ import subprocess
 from claude_agent_sdk import ClaudeAgentOptions, query
 
 from .config import ProjectConfig
-from .models import JudgeVerdict, WorkerResult
+from .models import JudgeVerdict, Task, WorkerResult
 from .prompts import load_prompt
 from .state import StateStore
 
@@ -103,6 +103,11 @@ async def _ai_evaluate(
 ) -> tuple[bool, str, float]:
     """When test results are ambiguous, the judge shall use an AI evaluation for nuanced assessment."""
     system = load_prompt("judge_system.md")
+
+    # Ensure verdicts directory exists for the judge to write to
+    verdicts_dir = project.abs_path / ".orch" / "verdicts"
+    verdicts_dir.mkdir(parents=True, exist_ok=True)
+
     prompt = f"""# Worker Output Evaluation
 
 ## Task Output
@@ -118,14 +123,14 @@ Files changed: {result.files_changed}
 ## Lint Output
 {lint_output[:500]}
 
-Evaluate whether this work meets the acceptance criteria.
+Write your detailed analysis to `.orch/verdicts/{result.task_id}_analysis.md` — include what you inspected, issues found, and your reasoning. Then return the JSON verdict.
 """
 
     options = ClaudeAgentOptions(
         model=project.judge_model,
         cwd=str(project.abs_path),
         system_prompt=system,
-        allowed_tools=["Read", "Grep", "Glob", "Bash"],
+        allowed_tools=["Read", "Write", "Grep", "Glob", "Bash"],
         permission_mode="bypassPermissions",
         output_format={"type": "json_schema", "schema": VERDICT_SCHEMA},
     )
@@ -177,55 +182,77 @@ def _write_verdict_log(
     )
 
 
+def _git_checkout(cwd: str, branch: str) -> bool:
+    """Checkout a git branch. Returns True on success."""
+    try:
+        result = subprocess.run(
+            ["git", "checkout", branch],
+            cwd=cwd, capture_output=True, text=True, timeout=15,
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
 async def evaluate_result(
+    task: Task,
     result: WorkerResult,
     project: ProjectConfig,
     store: StateStore,
 ) -> JudgeVerdict:
     """Evaluate a worker result through tests, lint, and optional AI review.
 
-    The judge shall run tests and lint checks first. When all automated checks pass,
-    the verdict shall be positive without AI evaluation. When automated checks fail
-    or produce ambiguous results, the judge shall invoke AI evaluation.
+    The judge shall checkout the task branch before running checks.
+    When all automated checks pass, the verdict shall be positive without
+    AI evaluation. When automated checks fail or produce ambiguous results,
+    the judge shall invoke AI evaluation.
     """
     cwd = str(project.abs_path)
     total_cost = 0.0
 
-    # Run tests
-    tests_passed_bool, tests_passed, tests_failed, test_output = _run_tests(
-        cwd, project.test_command
-    )
+    # Checkout the task branch to test the worker's changes
+    if not _git_checkout(cwd, task.branch):
+        logger.warning("Could not checkout %s for judging, running on current branch", task.branch)
 
-    # Run lint
-    lint_ok, lint_output = _run_lint(cwd, project.lint_command)
+    try:
+        # Run tests
+        tests_passed_bool, tests_passed, tests_failed, test_output = _run_tests(
+            cwd, project.test_command
+        )
 
-    # When both tests and lint pass, the judge shall return a positive verdict
-    if tests_passed_bool and lint_ok:
+        # Run lint
+        lint_ok, lint_output = _run_lint(cwd, project.lint_command)
+
+        # When both tests and lint pass, the judge shall return a positive verdict
+        if tests_passed_bool and lint_ok:
+            verdict = JudgeVerdict(
+                task_id=result.task_id,
+                passed=True,
+                tests_passed=tests_passed,
+                tests_failed=tests_failed,
+                lint_ok=lint_ok,
+                notes="All automated checks passed",
+            )
+            _write_verdict_log(project, result.task_id, verdict, test_output, lint_output)
+            return verdict
+
+        # When automated checks fail, the judge shall use AI evaluation for nuance
+        ai_passed, ai_notes, ai_cost = await _ai_evaluate(
+            result, project, test_output, lint_output
+        )
+        total_cost += ai_cost
+
         verdict = JudgeVerdict(
             task_id=result.task_id,
-            passed=True,
+            passed=ai_passed,
             tests_passed=tests_passed,
             tests_failed=tests_failed,
             lint_ok=lint_ok,
-            notes="All automated checks passed",
+            notes=ai_notes,
+            cost_usd=total_cost,
         )
         _write_verdict_log(project, result.task_id, verdict, test_output, lint_output)
         return verdict
-
-    # When automated checks fail, the judge shall use AI evaluation for nuance
-    ai_passed, ai_notes, ai_cost = await _ai_evaluate(
-        result, project, test_output, lint_output
-    )
-    total_cost += ai_cost
-
-    verdict = JudgeVerdict(
-        task_id=result.task_id,
-        passed=ai_passed,
-        tests_passed=tests_passed,
-        tests_failed=tests_failed,
-        lint_ok=lint_ok,
-        notes=ai_notes,
-        cost_usd=total_cost,
-    )
-    _write_verdict_log(project, result.task_id, verdict, test_output, lint_output)
-    return verdict
+    finally:
+        # Return to default branch after judging
+        _git_checkout(cwd, "main") or _git_checkout(cwd, "master")
