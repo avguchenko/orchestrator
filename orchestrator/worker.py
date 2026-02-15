@@ -1,11 +1,13 @@
-"""Worker: async wrapper around claude_agent_sdk.query() with git branch isolation."""
+"""Worker: async wrapper around claude_agent_sdk.query() with git worktree isolation."""
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import shutil
 import subprocess
 import time
+from pathlib import Path
 
 from claude_agent_sdk import ClaudeAgentOptions, query
 
@@ -43,24 +45,48 @@ def _get_default_branch(cwd: str) -> str:
             return "master"
 
 
-def _create_branch(cwd: str, branch: str) -> None:
-    """Create or checkout a task branch from the default branch.
+def _create_worktree(cwd: str, branch: str, task_id: str) -> str:
+    """Create an isolated git worktree for a worker.
 
-    When retrying a task, the branch may already exist. The worker shall
-    delete it and recreate from the latest default branch to get a clean state.
+    Each worker gets its own directory so parallel workers don't conflict.
+    Returns the path to the worktree directory.
     """
+    worktree_dir = str(Path(cwd) / ".orch" / "worktrees" / task_id)
     default = _get_default_branch(cwd)
+
+    # Clean up existing worktree if retrying
     try:
-        _git(cwd, "checkout", default)
-        _git(cwd, "pull", "--ff-only")
+        _git(cwd, "worktree", "remove", "--force", worktree_dir)
     except RuntimeError:
-        _git(cwd, "checkout", default)
+        pass
+    # Also clean up stale directory
+    if Path(worktree_dir).exists():
+        shutil.rmtree(worktree_dir)
     # Delete existing branch if retrying
     try:
         _git(cwd, "branch", "-D", branch)
     except RuntimeError:
-        pass  # Branch doesn't exist yet, that's fine
-    _git(cwd, "checkout", "-b", branch)
+        pass
+
+    # Create worktree with a new branch off default
+    Path(worktree_dir).parent.mkdir(parents=True, exist_ok=True)
+    _git(cwd, "worktree", "add", "-b", branch, worktree_dir, default)
+    logger.info("Created worktree for %s at %s", branch, worktree_dir)
+    return worktree_dir
+
+
+def _remove_worktree(cwd: str, worktree_dir: str) -> None:
+    """Remove a git worktree after the worker is done."""
+    try:
+        _git(cwd, "worktree", "remove", "--force", worktree_dir)
+    except RuntimeError:
+        # Force cleanup if git worktree remove fails
+        if Path(worktree_dir).exists():
+            shutil.rmtree(worktree_dir)
+        try:
+            _git(cwd, "worktree", "prune")
+        except RuntimeError:
+            pass
 
 
 def _capture_diff(cwd: str) -> tuple[str, int]:
@@ -108,25 +134,25 @@ def _write_worker_log(
 
 
 async def run_worker(task: Task, project: ProjectConfig) -> WorkerResult:
-    """Execute a task via claude_agent_sdk.query() on an isolated git branch."""
-    cwd = str(project.abs_path)
+    """Execute a task via claude_agent_sdk.query() in an isolated git worktree."""
+    repo_dir = str(project.abs_path)
     start = time.monotonic()
 
-    # Create isolated branch
+    # Create isolated worktree — each worker gets its own directory
     try:
-        _create_branch(cwd, task.branch)
+        worktree_dir = _create_worktree(repo_dir, task.branch, task.id)
     except RuntimeError as e:
         return WorkerResult(
             task_id=task.id,
             success=False,
-            error=f"Branch creation failed: {e}",
+            error=f"Worktree creation failed: {e}",
         )
 
-    # Build SDK options
+    # Build SDK options — cwd points to the isolated worktree
     system_prompt = _prompt_for_task_type(task)
     options = ClaudeAgentOptions(
         model=project.model,
-        cwd=cwd,
+        cwd=worktree_dir,
         system_prompt=system_prompt,
         allowed_tools=["Read", "Edit", "Write", "Bash", "Grep", "Glob"],
         permission_mode="bypassPermissions",
@@ -152,6 +178,7 @@ async def run_worker(task: Task, project: ProjectConfig) -> WorkerResult:
                         output_text += block.text
     except Exception as e:
         duration = time.monotonic() - start
+        _remove_worktree(repo_dir, worktree_dir)
         return WorkerResult(
             task_id=task.id,
             success=False,
@@ -161,26 +188,22 @@ async def run_worker(task: Task, project: ProjectConfig) -> WorkerResult:
             cost_usd=cost,
         )
 
-    # Commit any changes
+    # Commit any changes in the worktree
     try:
-        _git(cwd, "add", "-A")
-        _git(cwd, "commit", "-m", f"orch: {task.title}\n\nTask: {task.id}")
+        _git(worktree_dir, "add", "-A")
+        _git(worktree_dir, "commit", "-m", f"orch: {task.title}\n\nTask: {task.id}")
     except RuntimeError:
         pass  # No changes to commit is fine
 
-    # Capture diff
-    diff_stat, files_changed = _capture_diff(cwd)
+    # Capture diff from the worktree
+    diff_stat, files_changed = _capture_diff(worktree_dir)
     duration = time.monotonic() - start
 
-    # Write worker output to disk
+    # Write worker output to disk (in the main repo's .orch dir)
     _write_worker_log(project, task, output_text, diff_stat, cost, duration)
 
-    # Return to default branch
-    try:
-        default = _get_default_branch(cwd)
-        _git(cwd, "checkout", default)
-    except RuntimeError:
-        pass
+    # Clean up worktree — branch and commits remain in the main repo
+    _remove_worktree(repo_dir, worktree_dir)
 
     return WorkerResult(
         task_id=task.id,
@@ -198,7 +221,7 @@ async def run_workers_parallel(
     tasks: list[Task],
     project: ProjectConfig,
 ) -> list[WorkerResult]:
-    """Run multiple workers in parallel."""
+    """Run multiple workers in parallel, each in its own git worktree."""
     return list(await asyncio.gather(
         *(run_worker(t, project) for t in tasks)
     ))
