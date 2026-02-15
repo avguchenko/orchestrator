@@ -36,7 +36,7 @@ This file persists on disk. Humans review it. Write it to the `.orch/verdicts/` 
 
 ## Rules
 
-1. The judge shall always perform a code review regardless of automated check results. When tests pass and lint is clean, the judge shall verify that the worker's changes are correct, complete, and match the task description. Passing automated checks are necessary but not sufficient for approval.
+1. The judge shall always perform a code review regardless of automated check results. **Test failures are a hard gate** — when tests fail due to the worker's changes, the judge shall fail the verdict. **Lint is advisory** — pre-existing lint warnings shall not block approval. The judge shall only fail for lint issues that the worker directly introduced. When tests pass and the worker's code is correct, the judge shall approve the work.
 2. When tests fail, the judge shall determine whether failures relate to the worker's changes or pre-existing issues. Pre-existing failures shall not block a pass verdict.
 3. When the task type is "test", the judge shall verify that new test files created by the worker appear in the test output and were actually executed. When new `.spec.ts` or `_test.py` or `.test.ts` files are in the changed files list but absent from test output, the judge shall flag this as an issue.
 4. The judge shall flag security issues, obvious bugs, and convention violations.

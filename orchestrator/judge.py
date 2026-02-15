@@ -215,7 +215,7 @@ Type: {task.task_type.value}
 
 ## Automated Checks
 Tests: {"PASSED" if tests_passed_bool else "FAILED"} ({tests_passed_count} passed, {tests_failed_count} failed)
-Lint: {"PASSED" if lint_ok else "FAILED"}
+Lint: {"PASSED" if lint_ok else "FAILED (advisory — pre-existing lint issues do not block approval)"}
 
 ## Files Changed by Worker
 {changed_files}
@@ -237,6 +237,8 @@ Evaluate the worker's changes. Pay special attention to:
 - Whether new test files appear in the test output (were they discovered and executed?)
 - Whether the changes match the task description
 - Code quality and correctness of the actual diff
+
+**Verdict criteria**: Set "passed" to true when tests pass AND the worker's code correctly implements the task. Pre-existing lint warnings do NOT block approval. Only fail for: test failures caused by the worker, incorrect/incomplete implementation, or scope violations.
 
 Write your detailed analysis to `.orch/verdicts/{result.task_id}_analysis.md` — include what you inspected, issues found, and your reasoning. Then return the JSON verdict.
 """
