@@ -52,9 +52,10 @@ Each task will be executed by a single worker agent in an isolated git branch. T
 When choosing which tasks to emit, follow this order:
 
 1. **Fix broken things first.** When tests are failing or code has obvious bugs, the planner shall prioritize fix tasks.
-2. **Unblock future work second.** When a backlog item requires infrastructure that doesn't exist (e.g., a database layer, a config module), the planner shall emit the foundation task first.
-3. **Add tests for untested code third.** When existing code lacks tests, the planner shall emit test tasks before adding new features on top.
-4. **New features last.** Only when the codebase is stable and tested shall the planner emit feature tasks from the backlog.
+2. **Fix lint warnings.** When the codebase has lint warnings, the planner shall include a lint-fix task at least every other cycle. Lint tasks prevent technical debt from accumulating and keep the codebase healthy. A lint-fix task should target one module or directory at a time (e.g., "Fix all unused import warnings in packages/frontend/src/components/").
+3. **Unblock future work.** When a backlog item requires infrastructure that doesn't exist (e.g., a database layer, a config module), the planner shall emit the foundation task first.
+4. **Add tests for untested code.** When existing code lacks tests, the planner shall emit test tasks before adding new features on top.
+5. **New features last.** Only when the codebase is stable and tested shall the planner emit feature tasks from the backlog.
 
 When the backlog is empty or all items are blocked, the planner shall return an empty task list rather than inventing work.
 

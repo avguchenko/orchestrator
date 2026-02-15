@@ -353,9 +353,10 @@ async def evaluate_result(
         )
         total_cost += ai_cost
 
-        # AI verdict determines pass/fail, but hard-fail if tests or lint failed
-        # and AI didn't catch it
-        passed = ai_passed and tests_passed_bool and lint_ok
+        # Tests are a hard gate — failing tests always fail the verdict.
+        # Lint is advisory — the AI judge decides if lint issues are
+        # pre-existing or introduced by the worker.
+        passed = ai_passed and tests_passed_bool
 
         verdict = JudgeVerdict(
             task_id=result.task_id,
